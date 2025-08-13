@@ -30,10 +30,7 @@ namespace RdpKeyboardTranslator
         public static bool _translatorActive = true;
         private static Dictionary<int, ushort> _vkToScanCodeMap;
         
-        // Prevent duplicate key events (方向鍵重複觸發防護)
-        private static Dictionary<int, DateTime> _lastKeyEventTime = new Dictionary<int, DateTime>();
-        private static Dictionary<int, DateTime> _lastUnicodeEventTime = new Dictionary<int, DateTime>();
-        private const int DUPLICATE_KEY_THRESHOLD_MS = 50; // 50ms threshold for duplicates
+        // Note: Duplicate prevention removed - now using system key skip logic instead
 
         public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -649,11 +646,10 @@ namespace RdpKeyboardTranslator
 
                 Console.WriteLine($"[HOOK] {eventType} - VK:{vkCode:X2} ({(Keys)vkCode}) - ScanCode:{hookStruct.scanCode:X2} - Flags:{hookStruct.flags:X2}");
 
-                // Skip arrow keys - let system handle them natively (避免重複轉譯方向鍵)
-                if (vkCode == (int)Keys.Up || vkCode == (int)Keys.Down || 
-                    vkCode == (int)Keys.Left || vkCode == (int)Keys.Right)
+                // Skip keys that system already handles well - let system handle them natively (跳過系統原生支持的按鍵)
+                if (IsSystemHandledKey(vkCode))
                 {
-                    Console.WriteLine($"[SKIP] Arrow key detected - letting system handle natively: {(Keys)vkCode}");
+                    Console.WriteLine($"[SKIP] System-handled key detected - letting system handle natively: {(Keys)vkCode}");
                     return CallNextHookEx(_hookID, nCode, wParam, lParam);
                 }
 
@@ -675,14 +671,6 @@ namespace RdpKeyboardTranslator
                 if (vkCode == 0xE7) // VK_PACKET
                 {
                     Console.WriteLine($"[RDP] Detected VK_PACKET - RDP software keyboard event");
-                    
-                    // Check for duplicate event (方向鍵重複防護)
-                    if (IsDuplicateKeyEvent(vkCode, wParam))
-                    {
-                        Console.WriteLine($"[SKIP] Duplicate VK_PACKET event filtered - VK:{vkCode:X2}");
-                        return (IntPtr)1; // Block duplicate event
-                    }
-                    
                     // Extract Unicode character from VK_PACKET
                     HandleVkPacket(wParam, lParam);
                     return (IntPtr)1; // Block original event
@@ -714,13 +702,6 @@ namespace RdpKeyboardTranslator
 
                 Console.WriteLine($"[RDP] Processing RDP event - VK:{vkCode:X2} ({(Keys)vkCode}) - Converting to scancode");
 
-                // Check for duplicate event (方向鍵重複防護)
-                if (IsDuplicateKeyEvent(vkCode, wParam))
-                {
-                    Console.WriteLine($"[SKIP] Duplicate RDP event filtered - VK:{vkCode:X2}");
-                    return (IntPtr)1; // Block duplicate event
-                }
-
                 if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)
                 {
                     InjectHardwareScanCode(vkCode, false); // Key down
@@ -736,49 +717,45 @@ namespace RdpKeyboardTranslator
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
 
-        // Check if this is a duplicate key event within the threshold time (方向鍵重複防護)
-        private static bool IsDuplicateKeyEvent(int vkCode, IntPtr wParam)
+        // Check if this key should be handled by system natively (系統原生支持的按鍵檢查)
+        private static bool IsSystemHandledKey(int vkCode)
         {
-            // Create a unique key for the combination of vkCode and event type
-            int keyEventId = (vkCode << 4) | (int)wParam;
-            DateTime currentTime = DateTime.Now;
-            
-            if (_lastKeyEventTime.ContainsKey(keyEventId))
-            {
-                TimeSpan timeDiff = currentTime - _lastKeyEventTime[keyEventId];
-                if (timeDiff.TotalMilliseconds < DUPLICATE_KEY_THRESHOLD_MS)
-                {
-                    // This is a duplicate event within the threshold
-                    return true;
-                }
-            }
-            
-            // Update the last event time for this key
-            _lastKeyEventTime[keyEventId] = currentTime;
+            // Navigation keys
+            if (vkCode == (int)Keys.Up || vkCode == (int)Keys.Down || 
+                vkCode == (int)Keys.Left || vkCode == (int)Keys.Right ||
+                vkCode == (int)Keys.Home || vkCode == (int)Keys.End ||
+                vkCode == (int)Keys.PageUp || vkCode == (int)Keys.PageDown)
+                return true;
+
+            // Function keys
+            if (vkCode >= (int)Keys.F1 && vkCode <= (int)Keys.F24)
+                return true;
+
+            // System keys
+            if (vkCode == (int)Keys.Enter || vkCode == (int)Keys.Escape ||
+                vkCode == (int)Keys.Tab || vkCode == (int)Keys.Space ||
+                vkCode == (int)Keys.Back || vkCode == (int)Keys.Delete ||
+                vkCode == (int)Keys.Insert)
+                return true;
+
+            // Modifier keys
+            if (vkCode == (int)Keys.LShiftKey || vkCode == (int)Keys.RShiftKey ||
+                vkCode == (int)Keys.LControlKey || vkCode == (int)Keys.RControlKey ||
+                vkCode == (int)Keys.LMenu || vkCode == (int)Keys.RMenu ||
+                vkCode == (int)Keys.LWin || vkCode == (int)Keys.RWin)
+                return true;
+
+            // Lock keys
+            if (vkCode == (int)Keys.CapsLock || vkCode == (int)Keys.NumLock ||
+                vkCode == (int)Keys.Scroll)
+                return true;
+
+            // Note: Keep numpad keys and number/symbol keys for processing
+            // as they are often needed for text input
+
             return false;
         }
 
-        // Check if this is a duplicate Unicode event within the threshold time (方向鍵重複防護)
-        private static bool IsDuplicateUnicodeEvent(char unicodeChar, IntPtr wParam)
-        {
-            // Create a unique key for the combination of unicode char and event type
-            int unicodeEventId = ((int)unicodeChar << 4) | (int)wParam;
-            DateTime currentTime = DateTime.Now;
-            
-            if (_lastUnicodeEventTime.ContainsKey(unicodeEventId))
-            {
-                TimeSpan timeDiff = currentTime - _lastUnicodeEventTime[unicodeEventId];
-                if (timeDiff.TotalMilliseconds < DUPLICATE_KEY_THRESHOLD_MS)
-                {
-                    // This is a duplicate unicode event within the threshold
-                    return true;
-                }
-            }
-            
-            // Update the last event time for this unicode char
-            _lastUnicodeEventTime[unicodeEventId] = currentTime;
-            return false;
-        }
 
         private static void HandleVkPacket(IntPtr wParam, IntPtr lParam)
         {
@@ -789,13 +766,6 @@ namespace RdpKeyboardTranslator
             char unicodeChar = (char)hookStruct.scanCode;
             Console.WriteLine($"[PACKET] Unicode character: '{unicodeChar}' (0x{hookStruct.scanCode:X4}) - {(isKeyDown ? "DOWN" : "UP")}");
 
-            // Additional duplicate check for VK_PACKET Unicode characters (方向鍵重複防護)
-            if (IsDuplicateUnicodeEvent(unicodeChar, wParam))
-            {
-                Console.WriteLine($"[SKIP] Duplicate Unicode VK_PACKET event filtered - Char:'{unicodeChar}' (0x{hookStruct.scanCode:X4})");
-                return;
-            }
-
             // Convert Unicode character to virtual key code
             short vkResult = VkKeyScan(unicodeChar);
             if (vkResult != -1)
@@ -805,11 +775,10 @@ namespace RdpKeyboardTranslator
 
                 Console.WriteLine($"[PACKET] VkKeyScan result: VK={virtualKey:X2}, ShiftState={shiftState:X2}");
 
-                // Skip arrow keys in VK_PACKET too - let system handle them natively (避免重複轉譯方向鍵)
-                if (virtualKey == (int)Keys.Up || virtualKey == (int)Keys.Down || 
-                    virtualKey == (int)Keys.Left || virtualKey == (int)Keys.Right)
+                // Skip system-handled keys in VK_PACKET too - let system handle them natively (跳過系統原生支持的按鍵)
+                if (IsSystemHandledKey(virtualKey))
                 {
-                    Console.WriteLine($"[SKIP] Arrow key in VK_PACKET - letting system handle natively: {(Keys)virtualKey}");
+                    Console.WriteLine($"[SKIP] System-handled key in VK_PACKET - letting system handle natively: {(Keys)virtualKey}");
                     return;
                 }
 
