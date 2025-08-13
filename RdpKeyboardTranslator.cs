@@ -29,6 +29,11 @@ namespace RdpKeyboardTranslator
 
         public static bool _translatorActive = true;
         private static Dictionary<int, ushort> _vkToScanCodeMap;
+        
+        // Prevent duplicate key events (方向鍵重複觸發防護)
+        private static Dictionary<int, DateTime> _lastKeyEventTime = new Dictionary<int, DateTime>();
+        private static Dictionary<int, DateTime> _lastUnicodeEventTime = new Dictionary<int, DateTime>();
+        private const int DUPLICATE_KEY_THRESHOLD_MS = 50; // 50ms threshold for duplicates
 
         public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -662,6 +667,14 @@ namespace RdpKeyboardTranslator
                 if (vkCode == 0xE7) // VK_PACKET
                 {
                     Console.WriteLine($"[RDP] Detected VK_PACKET - RDP software keyboard event");
+                    
+                    // Check for duplicate event (方向鍵重複防護)
+                    if (IsDuplicateKeyEvent(vkCode, wParam))
+                    {
+                        Console.WriteLine($"[SKIP] Duplicate VK_PACKET event filtered - VK:{vkCode:X2}");
+                        return (IntPtr)1; // Block duplicate event
+                    }
+                    
                     // Extract Unicode character from VK_PACKET
                     HandleVkPacket(wParam, lParam);
                     return (IntPtr)1; // Block original event
@@ -693,6 +706,13 @@ namespace RdpKeyboardTranslator
 
                 Console.WriteLine($"[RDP] Processing RDP event - VK:{vkCode:X2} ({(Keys)vkCode}) - Converting to scancode");
 
+                // Check for duplicate event (方向鍵重複防護)
+                if (IsDuplicateKeyEvent(vkCode, wParam))
+                {
+                    Console.WriteLine($"[SKIP] Duplicate RDP event filtered - VK:{vkCode:X2}");
+                    return (IntPtr)1; // Block duplicate event
+                }
+
                 if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)
                 {
                     InjectHardwareScanCode(vkCode, false); // Key down
@@ -708,6 +728,50 @@ namespace RdpKeyboardTranslator
             return CallNextHookEx(_hookID, nCode, wParam, lParam);
         }
 
+        // Check if this is a duplicate key event within the threshold time (方向鍵重複防護)
+        private static bool IsDuplicateKeyEvent(int vkCode, IntPtr wParam)
+        {
+            // Create a unique key for the combination of vkCode and event type
+            int keyEventId = (vkCode << 4) | (int)wParam;
+            DateTime currentTime = DateTime.Now;
+            
+            if (_lastKeyEventTime.ContainsKey(keyEventId))
+            {
+                TimeSpan timeDiff = currentTime - _lastKeyEventTime[keyEventId];
+                if (timeDiff.TotalMilliseconds < DUPLICATE_KEY_THRESHOLD_MS)
+                {
+                    // This is a duplicate event within the threshold
+                    return true;
+                }
+            }
+            
+            // Update the last event time for this key
+            _lastKeyEventTime[keyEventId] = currentTime;
+            return false;
+        }
+
+        // Check if this is a duplicate Unicode event within the threshold time (方向鍵重複防護)
+        private static bool IsDuplicateUnicodeEvent(char unicodeChar, IntPtr wParam)
+        {
+            // Create a unique key for the combination of unicode char and event type
+            int unicodeEventId = ((int)unicodeChar << 4) | (int)wParam;
+            DateTime currentTime = DateTime.Now;
+            
+            if (_lastUnicodeEventTime.ContainsKey(unicodeEventId))
+            {
+                TimeSpan timeDiff = currentTime - _lastUnicodeEventTime[unicodeEventId];
+                if (timeDiff.TotalMilliseconds < DUPLICATE_KEY_THRESHOLD_MS)
+                {
+                    // This is a duplicate unicode event within the threshold
+                    return true;
+                }
+            }
+            
+            // Update the last event time for this unicode char
+            _lastUnicodeEventTime[unicodeEventId] = currentTime;
+            return false;
+        }
+
         private static void HandleVkPacket(IntPtr wParam, IntPtr lParam)
         {
             KBDLLHOOKSTRUCT hookStruct = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
@@ -716,6 +780,13 @@ namespace RdpKeyboardTranslator
             // The Unicode character is stored in the scanCode field for VK_PACKET
             char unicodeChar = (char)hookStruct.scanCode;
             Console.WriteLine($"[PACKET] Unicode character: '{unicodeChar}' (0x{hookStruct.scanCode:X4}) - {(isKeyDown ? "DOWN" : "UP")}");
+
+            // Additional duplicate check for VK_PACKET Unicode characters (方向鍵重複防護)
+            if (IsDuplicateUnicodeEvent(unicodeChar, wParam))
+            {
+                Console.WriteLine($"[SKIP] Duplicate Unicode VK_PACKET event filtered - Char:'{unicodeChar}' (0x{hookStruct.scanCode:X4})");
+                return;
+            }
 
             // Convert Unicode character to virtual key code
             short vkResult = VkKeyScan(unicodeChar);
