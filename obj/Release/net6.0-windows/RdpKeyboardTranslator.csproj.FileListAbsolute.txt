@@ -1,0 +1,14 @@
+C:\Users\Jason\Downloads\rdp\obj\Release\net6.0-windows\RdpKeyboardTranslator.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Jason\Downloads\rdp\obj\Release\net6.0-windows\RdpKeyboardTranslator.AssemblyInfoInputs.cache
+C:\Users\Jason\Downloads\rdp\obj\Release\net6.0-windows\RdpKeyboardTranslator.AssemblyInfo.cs
+C:\Users\Jason\Downloads\rdp\obj\Release\net6.0-windows\RdpKeyboardTranslator.csproj.CoreCompileInputs.cache
+C:\Users\Jason\Downloads\rdp\bin\Release\net6.0-windows\RdpKeyboardTranslator.exe
+C:\Users\Jason\Downloads\rdp\bin\Release\net6.0-windows\RdpKeyboardTranslator.deps.json
+C:\Users\Jason\Downloads\rdp\bin\Release\net6.0-windows\RdpKeyboardTranslator.runtimeconfig.json
+C:\Users\Jason\Downloads\rdp\bin\Release\net6.0-windows\RdpKeyboardTranslator.dll
+C:\Users\Jason\Downloads\rdp\bin\Release\net6.0-windows\RdpKeyboardTranslator.pdb
+C:\Users\Jason\Downloads\rdp\obj\Release\net6.0-windows\RdpKeyboardTranslator.dll
+C:\Users\Jason\Downloads\rdp\obj\Release\net6.0-windows\refint\RdpKeyboardTranslator.dll
+C:\Users\Jason\Downloads\rdp\obj\Release\net6.0-windows\RdpKeyboardTranslator.pdb
+C:\Users\Jason\Downloads\rdp\obj\Release\net6.0-windows\RdpKeyboardTranslator.genruntimeconfig.cache
+C:\Users\Jason\Downloads\rdp\obj\Release\net6.0-windows\ref\RdpKeyboardTranslator.dll
