@@ -25,7 +25,7 @@ namespace RdpKeyboardTranslator
         private static readonly object _bufLock = new object();
         private static System.Text.StringBuilder _unicodeBuffer = new System.Text.StringBuilder();
         private static System.Windows.Forms.Timer _flushTimer;
-        private const int BUFFER_FLUSH_INTERVAL_MS = 25;
+        private const int BUFFER_FLUSH_INTERVAL_MS = 10;  // 降低延遲從 25ms 到 10ms
 
         public static bool _translatorActive = true;
         private static Dictionary<int, ushort> _vkToScanCodeMap;
@@ -878,7 +878,7 @@ namespace RdpKeyboardTranslator
         // Optimized target window detection with caching and better window identification
         private static IntPtr _cachedTargetWindow = IntPtr.Zero;
         private static DateTime _lastWindowDetection = DateTime.MinValue;
-        private static readonly TimeSpan WindowCacheTimeout = TimeSpan.FromMilliseconds(500);
+        private static readonly TimeSpan WindowCacheTimeout = TimeSpan.FromMilliseconds(100);  // 縮短緩存時間以提升響應速度
         
         private static IntPtr FindBestTargetWindow()
         {
@@ -1236,11 +1236,33 @@ namespace RdpKeyboardTranslator
             {
                 _unicodeBuffer.Append(ch);
                 Console.WriteLine($"[BUF] Queued '{ch}'\t(0x{(int)ch:X4}) len={_unicodeBuffer.Length}");
+                
+                // 中文字元智能緩衝：單個中文字元或緩衝區達到3個字元時立即刷新
+                bool isChinese = ch >= 0x4E00 && ch <= 0x9FFF;  // CJK 統一漢字
+                if (isChinese || _unicodeBuffer.Length >= 3)
+                {
+                    Console.WriteLine($"[BUF] Triggering immediate flush for optimized response");
+                    // 重設計時器以立即觸發
+                    if (_flushTimer != null)
+                    {
+                        _flushTimer.Stop();
+                        _flushTimer.Interval = 1;  // 1ms 立即觸發
+                        _flushTimer.Start();
+                    }
+                }
             }
         }
 
         private static void FlushUnicodeBuffer()
         {
+            // 重設計時器為正常間隔
+            if (_flushTimer != null && _flushTimer.Interval != BUFFER_FLUSH_INTERVAL_MS)
+            {
+                _flushTimer.Stop();
+                _flushTimer.Interval = BUFFER_FLUSH_INTERVAL_MS;
+                _flushTimer.Start();
+            }
+            
             string payload = null;
             lock (_bufLock)
             {
@@ -1784,7 +1806,7 @@ namespace RdpKeyboardTranslator
                         foreach (char c in text)
                         {
                             PostMessage(targetWindow, WM_CHAR, (IntPtr)c, IntPtr.Zero);
-                            Thread.Sleep(1);
+                            // 移除 1ms 延遲以提升輸入速度
                         }
                         return true;
                     }
