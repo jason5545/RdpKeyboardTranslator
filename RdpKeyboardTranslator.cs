@@ -649,6 +649,14 @@ namespace RdpKeyboardTranslator
 
                 Console.WriteLine($"[HOOK] {eventType} - VK:{vkCode:X2} ({(Keys)vkCode}) - ScanCode:{hookStruct.scanCode:X2} - Flags:{hookStruct.flags:X2}");
 
+                // Skip arrow keys - let system handle them natively (避免重複轉譯方向鍵)
+                if (vkCode == (int)Keys.Up || vkCode == (int)Keys.Down || 
+                    vkCode == (int)Keys.Left || vkCode == (int)Keys.Right)
+                {
+                    Console.WriteLine($"[SKIP] Arrow key detected - letting system handle natively: {(Keys)vkCode}");
+                    return CallNextHookEx(_hookID, nCode, wParam, lParam);
+                }
+
                 // Check for exit hotkey: ESC + F12
                 if (vkCode == (int)Keys.Escape || vkCode == (int)Keys.F12)
                 {
@@ -796,6 +804,14 @@ namespace RdpKeyboardTranslator
                 int shiftState = (vkResult >> 8) & 0xFF;
 
                 Console.WriteLine($"[PACKET] VkKeyScan result: VK={virtualKey:X2}, ShiftState={shiftState:X2}");
+
+                // Skip arrow keys in VK_PACKET too - let system handle them natively (避免重複轉譯方向鍵)
+                if (virtualKey == (int)Keys.Up || virtualKey == (int)Keys.Down || 
+                    virtualKey == (int)Keys.Left || virtualKey == (int)Keys.Right)
+                {
+                    Console.WriteLine($"[SKIP] Arrow key in VK_PACKET - letting system handle natively: {(Keys)virtualKey}");
+                    return;
+                }
 
                 // Handle shift state if needed
                 if (shiftState != 0)
