@@ -2043,13 +2043,24 @@ namespace RdpKeyboardTranslator
             private static readonly object _lock = new object();
             private static IntPtr _virtualWindow = IntPtr.Zero;
             private static uint _virtualWindowClass = 0;
-            
+            private static bool _isDisposed = false;
+
+            // Configuration constants for improved timing and retry logic
+            private const int MAX_RETRY_ATTEMPTS = 3;
+            private const int BASE_PASTE_WAIT_MS = 50;
+            private const int MAX_PASTE_WAIT_MS = 500;
+            private const int CLIPBOARD_OPERATION_TIMEOUT_MS = 2000;
+
             // Create an invisible window for our virtual clipboard operations
             static VirtualClipboardService()
             {
                 try
                 {
                     InitializeVirtualWindow();
+
+                    // Register cleanup on application exit
+                    AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
+                    Application.ApplicationExit += OnApplicationExit;
                 }
                 catch (Exception ex)
                 {
@@ -2069,6 +2080,12 @@ namespace RdpKeyboardTranslator
 
             [DllImport("user32.dll")]
             private static extern IntPtr DefWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+            [DllImport("user32.dll", SetLastError = true)]
+            private static extern bool DestroyWindow(IntPtr hWnd);
+
+            [DllImport("user32.dll", SetLastError = true)]
+            private static extern bool UnregisterClass(string lpClassName, IntPtr hInstance);
 
             [DllImport("kernel32.dll")]
             private static extern IntPtr GetModuleHandle(string lpModuleName);
@@ -2130,17 +2147,66 @@ namespace RdpKeyboardTranslator
                 return DefWindowProc(hWnd, msg, wParam, lParam);
             }
 
+            // Cleanup event handlers
+            private static void OnProcessExit(object sender, EventArgs e)
+            {
+                Cleanup();
+            }
+
+            private static void OnApplicationExit(object sender, EventArgs e)
+            {
+                Cleanup();
+            }
+
+            // Public cleanup method
+            public static void Cleanup()
+            {
+                lock (_lock)
+                {
+                    if (_isDisposed) return;
+
+                    try
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] Cleaning up virtual clipboard service");
+
+                        if (_virtualWindow != IntPtr.Zero)
+                        {
+                            DestroyWindow(_virtualWindow);
+                            _virtualWindow = IntPtr.Zero;
+                        }
+
+                        if (_virtualWindowClass != 0)
+                        {
+                            UnregisterClass($"RdpTranslatorVirtualClip_{System.Diagnostics.Process.GetCurrentProcess().Id}", GetModuleHandle(null));
+                            _virtualWindowClass = 0;
+                        }
+
+                        _isDisposed = true;
+                        Console.WriteLine("[VIRTUAL-CLIP] Cleanup completed");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[VIRTUAL-CLIP] Cleanup error: {ex.Message}");
+                    }
+                }
+            }
+
             public static bool InjectText(string text)
             {
                 lock (_lock)
                 {
+                    if (_isDisposed)
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] Service is disposed, cannot inject text");
+                        return false;
+                    }
+
                     try
                     {
                         Console.WriteLine($"[VIRTUAL-CLIP] Direct clipboard injection for reliable Unicode: '{text}'");
-                        
-                        // Skip all the experimental methods, go straight to proven clipboard method
-                        // but use our virtual window for isolation
-                        return InjectTextViaIsolatedClipboard(text);
+
+                        // Use improved clipboard method with retry logic
+                        return InjectTextViaIsolatedClipboardWithRetry(text);
                     }
                     catch (Exception ex)
                     {
@@ -2148,6 +2214,93 @@ namespace RdpKeyboardTranslator
                         return false;
                     }
                 }
+            }
+
+            // Improved clipboard injection with retry logic and better error handling
+            private static bool InjectTextViaIsolatedClipboardWithRetry(string text)
+            {
+                for (int attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++)
+                {
+                    Console.WriteLine($"[VIRTUAL-CLIP] Clipboard injection attempt {attempt}/{MAX_RETRY_ATTEMPTS} for: '{text}'");
+
+                    if (InjectTextViaIsolatedClipboard(text))
+                    {
+                        Console.WriteLine($"[VIRTUAL-CLIP] Injection successful on attempt {attempt}");
+                        return true;
+                    }
+
+                    if (attempt < MAX_RETRY_ATTEMPTS)
+                    {
+                        int waitTime = attempt * 100; // Progressive backoff
+                        Console.WriteLine($"[VIRTUAL-CLIP] Attempt {attempt} failed, waiting {waitTime}ms before retry");
+                        Thread.Sleep(waitTime);
+                    }
+                }
+
+                Console.WriteLine($"[VIRTUAL-CLIP] All {MAX_RETRY_ATTEMPTS} attempts failed for text: '{text}'");
+                return false;
+            }
+
+            // Enhanced clipboard backup with validation
+            private static ClipboardBackup CreateClipboardBackup(IntPtr owner)
+            {
+                var backup = new ClipboardBackup();
+
+                try
+                {
+                    if (!IsClipboardFormatAvailable(CF_UNICODETEXT))
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] No Unicode text in clipboard to backup");
+                        return backup;
+                    }
+
+                    IntPtr originalData = GetClipboardData(CF_UNICODETEXT);
+                    if (originalData == IntPtr.Zero)
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] Failed to get clipboard data");
+                        return backup;
+                    }
+
+                    IntPtr locked = GlobalLock(originalData);
+                    if (locked == IntPtr.Zero)
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] Failed to lock clipboard data");
+                        return backup;
+                    }
+
+                    try
+                    {
+                        UIntPtr size = GlobalSize(originalData);
+                        if (size.ToUInt32() > 0 && size.ToUInt32() < 10 * 1024 * 1024) // Max 10MB safety check
+                        {
+                            backup.Data = new byte[(int)size];
+                            Marshal.Copy(locked, backup.Data, 0, (int)size);
+                            backup.HasBackup = true;
+                            Console.WriteLine($"[VIRTUAL-CLIP] Successfully backed up clipboard ({backup.Data.Length} bytes)");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"[VIRTUAL-CLIP] Clipboard data size invalid: {size}");
+                        }
+                    }
+                    finally
+                    {
+                        GlobalUnlock(originalData);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[VIRTUAL-CLIP] Backup creation failed: {ex.Message}");
+                }
+
+                return backup;
+            }
+
+            // Helper class for clipboard backup
+            private class ClipboardBackup
+            {
+                public byte[] Data { get; set; }
+                public bool HasBackup { get; set; } = false;
             }
 
             private static bool InjectTextViaKeyboard(string text)
@@ -2224,156 +2377,285 @@ namespace RdpKeyboardTranslator
             private static bool InjectTextViaIsolatedClipboard(string text)
             {
                 Console.WriteLine($"[VIRTUAL-CLIP] Using clipboard injection with virtual window isolation for: '{text}'");
-                
+
+                IntPtr clipboardOwner = _virtualWindow != IntPtr.Zero ? _virtualWindow : IntPtr.Zero;
+                Console.WriteLine($"[VIRTUAL-CLIP] Using clipboard owner: 0x{clipboardOwner.ToInt64():X}");
+
+                ClipboardBackup backup = null;
+                bool clipboardOpened = false;
+
                 try
                 {
-                    IntPtr clipboardOwner = _virtualWindow != IntPtr.Zero ? _virtualWindow : IntPtr.Zero;
-                    Console.WriteLine($"[VIRTUAL-CLIP] Using clipboard owner: 0x{clipboardOwner.ToInt64():X}");
-
-                    // Open clipboard with our virtual window as owner for isolation
-                    if (!OpenClipboard(clipboardOwner))
+                    // Step 1: Open clipboard with timeout protection
+                    if (!TryOpenClipboardWithTimeout(clipboardOwner, CLIPBOARD_OPERATION_TIMEOUT_MS))
                     {
-                        Console.WriteLine($"[VIRTUAL-CLIP] Failed to open clipboard: {Marshal.GetLastWin32Error()}");
+                        Console.WriteLine($"[VIRTUAL-CLIP] Failed to open clipboard within timeout");
+                        return false;
+                    }
+                    clipboardOpened = true;
+
+                    // Step 2: Create backup BEFORE making any changes
+                    backup = CreateClipboardBackup(clipboardOwner);
+
+                    // Step 3: Set our text (only proceed if we have a backup or clipboard was empty)
+                    if (!backup.HasBackup)
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] No existing clipboard content, safe to proceed");
+                    }
+
+                    if (!SetClipboardText(text))
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] Failed to set clipboard text");
                         return false;
                     }
 
-                    try
+                    CloseClipboard();
+                    clipboardOpened = false;
+                    Console.WriteLine($"[VIRTUAL-CLIP] Clipboard set to: '{text}'");
+
+                    // Step 4: Send paste command with improved timing
+                    bool pasteSuccess = SendPasteCommandWithTiming(text);
+
+                    // Step 5: Restore clipboard (always attempt restoration if we had backup)
+                    if (backup.HasBackup)
                     {
-                        // Store original clipboard content for restoration
-                        IntPtr originalData = IntPtr.Zero;
-                        byte[] backupData = null;
-                        bool hasBackup = false;
-
-                        if (IsClipboardFormatAvailable(CF_UNICODETEXT))
-                        {
-                            originalData = GetClipboardData(CF_UNICODETEXT);
-                            if (originalData != IntPtr.Zero)
-                            {
-                                IntPtr locked = GlobalLock(originalData);
-                                if (locked != IntPtr.Zero)
-                                {
-                                    UIntPtr size = GlobalSize(originalData);
-                                    backupData = new byte[(int)size];
-                                    Marshal.Copy(locked, backupData, 0, (int)size);
-                                    GlobalUnlock(originalData);
-                                    hasBackup = true;
-                                    Console.WriteLine($"[VIRTUAL-CLIP] Backed up clipboard ({backupData.Length} bytes)");
-                                }
-                            }
-                        }
-
-                        // Clear and set our text
-                        EmptyClipboard();
-
-                        byte[] textBytes = System.Text.Encoding.Unicode.GetBytes(text + '\0');
-                        IntPtr hGlobal = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)textBytes.Length);
-                        
-                        if (hGlobal == IntPtr.Zero)
-                        {
-                            CloseClipboard();
-                            Console.WriteLine("[VIRTUAL-CLIP] Failed to allocate memory");
-                            return false;
-                        }
-
-                        IntPtr lpMem = GlobalLock(hGlobal);
-                        if (lpMem == IntPtr.Zero)
-                        {
-                            CloseClipboard();
-                            Console.WriteLine("[VIRTUAL-CLIP] Failed to lock memory");
-                            return false;
-                        }
-
-                        Marshal.Copy(textBytes, 0, lpMem, textBytes.Length);
-                        GlobalUnlock(hGlobal);
-
-                        if (SetClipboardData(CF_UNICODETEXT, hGlobal) == IntPtr.Zero)
-                        {
-                            CloseClipboard();
-                            Console.WriteLine("[VIRTUAL-CLIP] Failed to set clipboard data");
-                            return false;
-                        }
-
-                        CloseClipboard();
-                        Console.WriteLine($"[VIRTUAL-CLIP] Clipboard set to: '{text}'");
-
-                        // Disable our translator to avoid interference
-                        _translatorActive = false;
-                        try
-                        {
-                            // Send Ctrl+V
-                            Thread.Sleep(10); // Give clipboard time
-                            Console.WriteLine("[VIRTUAL-CLIP] Sending Ctrl+V sequence");
-                            
-                            keybd_event(0x11, 0, 0, UIntPtr.Zero); // Ctrl down
-                            Thread.Sleep(2);
-                            keybd_event(0x56, 0, 0, UIntPtr.Zero); // V down
-                            Thread.Sleep(2);
-                            keybd_event(0x56, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); // V up
-                            Thread.Sleep(2);
-                            keybd_event(0x11, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); // Ctrl up
-                            
-                            Thread.Sleep(20); // Wait for paste
-                        }
-                        finally
-                        {
-                            _translatorActive = true;
-                        }
-
-                        // Restore original clipboard
-                        if (hasBackup && backupData != null)
-                        {
-                            RestoreOriginalClipboard(backupData, clipboardOwner);
-                        }
-                        else
-                        {
-                            // Clear clipboard if no backup
-                            if (OpenClipboard(clipboardOwner))
-                            {
-                                EmptyClipboard();
-                                CloseClipboard();
-                                Console.WriteLine("[VIRTUAL-CLIP] Clipboard cleared (no backup)");
-                            }
-                        }
-
-                        Console.WriteLine($"[VIRTUAL-CLIP] Text injection completed: '{text}'");
-                        return true;
+                        RestoreClipboardFromBackup(backup, clipboardOwner);
                     }
-                    catch (Exception innerEx)
+                    else
                     {
-                        CloseClipboard();
-                        Console.WriteLine($"[VIRTUAL-CLIP] Inner exception: {innerEx.Message}");
-                        throw;
+                        // Only clear if we had no backup and paste was successful
+                        if (pasteSuccess)
+                        {
+                            ClearClipboardSafely(clipboardOwner);
+                        }
                     }
+
+                    Console.WriteLine($"[VIRTUAL-CLIP] Text injection completed: '{text}' - Success: {pasteSuccess}");
+                    return pasteSuccess;
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[VIRTUAL-CLIP] Clipboard injection failed: {ex.Message}");
+
+                    // Emergency cleanup
+                    if (clipboardOpened)
+                    {
+                        try { CloseClipboard(); } catch { }
+                    }
+
+                    // Try to restore backup if we had one
+                    if (backup?.HasBackup == true)
+                    {
+                        try
+                        {
+                            RestoreClipboardFromBackup(backup, clipboardOwner);
+                        }
+                        catch (Exception restoreEx)
+                        {
+                            Console.WriteLine($"[VIRTUAL-CLIP] Failed to restore clipboard after error: {restoreEx.Message}");
+                        }
+                    }
+
                     return false;
                 }
             }
 
-            private static void RestoreOriginalClipboard(byte[] data, IntPtr owner)
+            // Helper method: Try to open clipboard with timeout
+            private static bool TryOpenClipboardWithTimeout(IntPtr owner, int timeoutMs)
             {
-                try
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+                while (stopwatch.ElapsedMilliseconds < timeoutMs)
                 {
                     if (OpenClipboard(owner))
                     {
+                        Console.WriteLine($"[VIRTUAL-CLIP] Clipboard opened after {stopwatch.ElapsedMilliseconds}ms");
+                        return true;
+                    }
+
+                    Thread.Sleep(10); // Small delay before retry
+                }
+
+                Console.WriteLine($"[VIRTUAL-CLIP] Clipboard open timeout after {timeoutMs}ms");
+                return false;
+            }
+
+            // Helper method: Set clipboard text with proper memory management
+            private static bool SetClipboardText(string text)
+            {
+                try
+                {
+                    EmptyClipboard();
+
+                    byte[] textBytes = System.Text.Encoding.Unicode.GetBytes(text + '\0');
+                    IntPtr hGlobal = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)textBytes.Length);
+
+                    if (hGlobal == IntPtr.Zero)
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] Failed to allocate memory");
+                        return false;
+                    }
+
+                    IntPtr lpMem = GlobalLock(hGlobal);
+                    if (lpMem == IntPtr.Zero)
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] Failed to lock memory");
+                        return false;
+                    }
+
+                    Marshal.Copy(textBytes, 0, lpMem, textBytes.Length);
+                    GlobalUnlock(hGlobal);
+
+                    if (SetClipboardData(CF_UNICODETEXT, hGlobal) == IntPtr.Zero)
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] Failed to set clipboard data");
+                        return false;
+                    }
+
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[VIRTUAL-CLIP] SetClipboardText error: {ex.Message}");
+                    return false;
+                }
+            }
+
+            // Helper method: Send paste command with adaptive timing
+            private static bool SendPasteCommandWithTiming(string text)
+            {
+                _translatorActive = false;
+                try
+                {
+                    // Determine wait time based on text length and target application
+                    int pasteWaitTime = CalculateOptimalPasteWaitTime(text);
+
+                    Thread.Sleep(10); // Give clipboard time to settle
+                    Console.WriteLine($"[VIRTUAL-CLIP] Sending Ctrl+V sequence (will wait {pasteWaitTime}ms for completion)");
+
+                    // Send Ctrl+V with consistent timing
+                    keybd_event(0x11, 0, 0, UIntPtr.Zero); // Ctrl down
+                    Thread.Sleep(5);
+                    keybd_event(0x56, 0, 0, UIntPtr.Zero); // V down
+                    Thread.Sleep(5);
+                    keybd_event(0x56, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); // V up
+                    Thread.Sleep(5);
+                    keybd_event(0x11, 0, KEYEVENTF_KEYUP, UIntPtr.Zero); // Ctrl up
+
+                    // Wait for paste to complete
+                    Thread.Sleep(pasteWaitTime);
+
+                    Console.WriteLine("[VIRTUAL-CLIP] Paste command completed");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[VIRTUAL-CLIP] Paste command failed: {ex.Message}");
+                    return false;
+                }
+                finally
+                {
+                    _translatorActive = true;
+                }
+            }
+
+            // Helper method: Calculate optimal wait time based on context
+            private static int CalculateOptimalPasteWaitTime(string text)
+            {
+                int baseTime = BASE_PASTE_WAIT_MS;
+
+                // Adjust based on text length
+                int lengthFactor = Math.Min(text.Length * 2, 100);
+
+                // Adjust based on target application (if we can detect it)
+                int appFactor = GetApplicationTimingFactor();
+
+                int totalTime = Math.Min(baseTime + lengthFactor + appFactor, MAX_PASTE_WAIT_MS);
+
+                Console.WriteLine($"[VIRTUAL-CLIP] Calculated paste wait time: {totalTime}ms (base:{baseTime}, length:{lengthFactor}, app:{appFactor})");
+                return totalTime;
+            }
+
+            // Helper method: Get timing factor based on target application
+            private static int GetApplicationTimingFactor()
+            {
+                try
+                {
+                    IntPtr foregroundWindow = GetForegroundWindow();
+                    if (foregroundWindow == IntPtr.Zero) return 0;
+
+                    var className = new System.Text.StringBuilder(256);
+                    GetClassName(foregroundWindow, className, 256);
+                    string classStr = className.ToString();
+
+                    // Terminal applications might need more time
+                    if (classStr.Contains("CASCADIA") || classStr.Contains("Terminal") || classStr.Contains("Warp"))
+                        return 50;
+
+                    // IDE applications might need more time
+                    if (classStr.Contains("Chrome") && classStr.Contains("WidgetWin"))
+                        return 30;
+
+                    return 0;
+                }
+                catch
+                {
+                    return 0;
+                }
+            }
+
+            // Helper method: Restore clipboard from backup with improved error handling
+            private static void RestoreClipboardFromBackup(ClipboardBackup backup, IntPtr owner)
+            {
+                if (!backup.HasBackup || backup.Data == null)
+                {
+                    Console.WriteLine("[VIRTUAL-CLIP] No backup to restore");
+                    return;
+                }
+
+                try
+                {
+                    if (!TryOpenClipboardWithTimeout(owner, 1000))
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] Failed to open clipboard for restoration");
+                        return;
+                    }
+
+                    try
+                    {
                         EmptyClipboard();
-                        
-                        IntPtr hGlobal = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)data.Length);
+
+                        IntPtr hGlobal = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)backup.Data.Length);
                         if (hGlobal != IntPtr.Zero)
                         {
                             IntPtr lpMem = GlobalLock(hGlobal);
                             if (lpMem != IntPtr.Zero)
                             {
-                                Marshal.Copy(data, 0, lpMem, data.Length);
+                                Marshal.Copy(backup.Data, 0, lpMem, backup.Data.Length);
                                 GlobalUnlock(hGlobal);
-                                SetClipboardData(CF_UNICODETEXT, hGlobal);
+
+                                if (SetClipboardData(CF_UNICODETEXT, hGlobal) != IntPtr.Zero)
+                                {
+                                    Console.WriteLine($"[VIRTUAL-CLIP] Successfully restored clipboard ({backup.Data.Length} bytes)");
+                                }
+                                else
+                                {
+                                    Console.WriteLine("[VIRTUAL-CLIP] Failed to set restored clipboard data");
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine("[VIRTUAL-CLIP] Failed to lock memory for restoration");
                             }
                         }
-                        
+                        else
+                        {
+                            Console.WriteLine("[VIRTUAL-CLIP] Failed to allocate memory for restoration");
+                        }
+                    }
+                    finally
+                    {
                         CloseClipboard();
-                        Console.WriteLine("[VIRTUAL-CLIP] Original clipboard restored");
                     }
                 }
                 catch (Exception ex)
@@ -2381,6 +2663,36 @@ namespace RdpKeyboardTranslator
                     Console.WriteLine($"[VIRTUAL-CLIP] Failed to restore clipboard: {ex.Message}");
                     try { CloseClipboard(); } catch { }
                 }
+            }
+
+            // Helper method: Safely clear clipboard
+            private static void ClearClipboardSafely(IntPtr owner)
+            {
+                try
+                {
+                    if (TryOpenClipboardWithTimeout(owner, 500))
+                    {
+                        EmptyClipboard();
+                        CloseClipboard();
+                        Console.WriteLine("[VIRTUAL-CLIP] Clipboard cleared safely");
+                    }
+                    else
+                    {
+                        Console.WriteLine("[VIRTUAL-CLIP] Failed to open clipboard for clearing");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[VIRTUAL-CLIP] Failed to clear clipboard: {ex.Message}");
+                    try { CloseClipboard(); } catch { }
+                }
+            }
+
+            // Legacy method - kept for backward compatibility but improved
+            private static void RestoreOriginalClipboard(byte[] data, IntPtr owner)
+            {
+                var backup = new ClipboardBackup { Data = data, HasBackup = data != null };
+                RestoreClipboardFromBackup(backup, owner);
             }
 
             private static bool InjectTextDirect(string text)
@@ -2452,10 +2764,17 @@ namespace RdpKeyboardTranslator
             };
         }
 
+        // Public cleanup method for external access
+        public static void CleanupVirtualClipboard()
+        {
+            VirtualClipboardService.Cleanup();
+        }
+
         ~KeyboardTranslator()
         {
             UnhookWindowsHookEx(_hookID);
             CleanupTSF();
+            VirtualClipboardService.Cleanup();
         }
     }
 
@@ -2587,13 +2906,16 @@ namespace RdpKeyboardTranslator
             // Cleanup
             _trayIcon.Visible = false;
             KeyboardTranslator._translatorActive = false;
-            
+
+            // Clean up virtual clipboard service
+            KeyboardTranslator.CleanupVirtualClipboard();
+
             // Show goodbye message
             _trayIcon.ShowBalloonTip(2000, "RDP 鍵盤轉換器", "已退出轉換器", ToolTipIcon.Info);
-            
+
             // Wait a moment for balloon to show
             System.Threading.Thread.Sleep(500);
-            
+
             Application.Exit();
         }
 
