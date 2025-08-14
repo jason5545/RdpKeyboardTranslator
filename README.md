@@ -60,6 +60,21 @@ RdpKeyboardTranslator.exe --console
 run.bat
 ```
 
+**⚡ Windows服務模式：持續運行**
+```cmd
+# 安裝為Windows服務（需要管理員權限）
+install_service.bat
+
+# 管理服務
+sc start RdpKeyboardTranslator    # 啟動服務
+sc stop RdpKeyboardTranslator     # 停止服務
+service_status.bat                # 檢查服務狀態
+restart_service.bat               # 重啟服務
+
+# 卸載服務
+uninstall_service.bat
+```
+
 ### 3. 使用說明
 
 #### 系統托盤模式（默認，推薦）
@@ -73,6 +88,13 @@ run.bat
 #### 控制台模式（調試用）
 1. 啟動後會顯示詳細的調試信息
 2. **退出轉譯器**: 同時按下 `ESC + F12`
+
+#### Windows服務模式（推薦：持續運行）
+1. 以管理員身份執行 `install_service.bat`
+2. 服務將自動啟動並設為開機自啟
+3. 使用 `service_status.bat` 檢查服務狀態
+4. 服務在背景持續運行，無需用戶介入
+5. 系統重啟後自動恢復運行
 
 #### 托盤圖標菜單選項
 - **啟用/停用轉換器**: 快速切換功能

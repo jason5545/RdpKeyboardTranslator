@@ -8,6 +8,10 @@ using System.Drawing;
 using System.Collections.Generic;
 using System.Threading;
 using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace RdpKeyboardTranslator
 {
@@ -19,13 +23,13 @@ namespace RdpKeyboardTranslator
         private const int WM_SYSKEYDOWN = 0x0104;
         private const int WM_SYSKEYUP = 0x0105;
 
-        private LowLevelKeyboardProc _proc = HookCallback;
-        private static IntPtr _hookID = IntPtr.Zero;
+        public static LowLevelKeyboardProc _proc = HookCallback;
+        public static IntPtr _hookID = IntPtr.Zero;
         // Buffered Unicode pipeline (TSF primary)
         private static readonly object _bufLock = new object();
         private static System.Text.StringBuilder _unicodeBuffer = new System.Text.StringBuilder();
-        private static System.Windows.Forms.Timer _flushTimer;
-        private const int BUFFER_FLUSH_INTERVAL_MS = 10;  // 降低延遲從 25ms 到 10ms
+        public static System.Windows.Forms.Timer _flushTimer;
+        public const int BUFFER_FLUSH_INTERVAL_MS = 10;  // 降低延遲從 25ms 到 10ms
 
         public static bool _translatorActive = true;
         private static Dictionary<int, ushort> _vkToScanCodeMap;
@@ -67,7 +71,7 @@ namespace RdpKeyboardTranslator
 
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+        public static extern bool UnhookWindowsHookEx(IntPtr hhk);
 
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode,
@@ -529,6 +533,13 @@ namespace RdpKeyboardTranslator
         // Main entry point with command line argument support (默認托盤模式)
         public static void Main(string[] args)
         {
+            // Check for service mode
+            if (args.Length > 0 && args[0].ToLower() == "--service")
+            {
+                RunAsService(args);
+                return;
+            }
+            
             // Check for console/debug mode
             bool consoleMode = args.Length > 0 && (args[0].ToLower() == "--console" || args[0].ToLower() == "--debug");
             
@@ -541,6 +552,19 @@ namespace RdpKeyboardTranslator
                 // Default to tray mode for production use
                 RunTrayMode();
             }
+        }
+
+        private static void RunAsService(string[] args)
+        {
+            var host = Host.CreateDefaultBuilder(args)
+                .UseWindowsService()
+                .ConfigureServices(services =>
+                {
+                    services.AddHostedService<KeyboardTranslatorService>();
+                })
+                .Build();
+                
+            host.Run();
         }
 
         private static void RunDebugMode()
@@ -618,7 +642,7 @@ namespace RdpKeyboardTranslator
             _hookID = SetHook(_proc);
         }
 
-        private IntPtr SetHook(LowLevelKeyboardProc proc)
+        public static IntPtr SetHook(LowLevelKeyboardProc proc)
         {
             using (Process curProcess = Process.GetCurrentProcess())
             using (ProcessModule curModule = curProcess.MainModule)
@@ -1253,7 +1277,7 @@ namespace RdpKeyboardTranslator
             }
         }
 
-        private static void FlushUnicodeBuffer()
+        public static void FlushUnicodeBuffer()
         {
             // 重設計時器為正常間隔
             if (_flushTimer != null && _flushTimer.Interval != BUFFER_FLUSH_INTERVAL_MS)
@@ -1697,7 +1721,7 @@ namespace RdpKeyboardTranslator
             return (GetKeyState((int)key) & 0x8000) != 0;
         }
 
-        private static bool InitializeTSF()
+        public static bool InitializeTSF()
         {
             try
             {
@@ -2760,7 +2784,7 @@ namespace RdpKeyboardTranslator
             }
         }
 
-        private static void InitializeScanCodeMapping()
+        public static void InitializeScanCodeMapping()
         {
             _vkToScanCodeMap = new Dictionary<int, ushort>
             {
@@ -2956,5 +2980,68 @@ namespace RdpKeyboardTranslator
 
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    }
+
+    public class KeyboardTranslatorService : BackgroundService
+    {
+        private readonly ILogger<KeyboardTranslatorService> _logger;
+
+        public KeyboardTranslatorService(ILogger<KeyboardTranslatorService> logger)
+        {
+            _logger = logger;
+        }
+
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        {
+            try
+            {
+                _logger.LogInformation("RDP Keyboard Translator Service starting...");
+                
+                KeyboardTranslator.InitializeScanCodeMapping();
+                
+                if (KeyboardTranslator.InitializeTSF())
+                {
+                    _logger.LogInformation("TSF initialized successfully");
+                }
+                else
+                {
+                    _logger.LogWarning("TSF initialization failed - falling back to legacy methods");
+                }
+
+                KeyboardTranslator._flushTimer = new System.Windows.Forms.Timer();
+                KeyboardTranslator._flushTimer.Interval = KeyboardTranslator.BUFFER_FLUSH_INTERVAL_MS;
+                KeyboardTranslator._flushTimer.Tick += (s, e) => KeyboardTranslator.FlushUnicodeBuffer();
+                KeyboardTranslator._flushTimer.Start();
+
+                KeyboardTranslator._hookID = KeyboardTranslator.SetHook(KeyboardTranslator._proc);
+                _logger.LogInformation("Global keyboard hook installed, Hook ID: {HookId}", KeyboardTranslator._hookID);
+
+                while (!stoppingToken.IsCancellationRequested)
+                {
+                    await Task.Delay(1000, stoppingToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in KeyboardTranslatorService");
+                throw;
+            }
+        }
+
+        public override async Task StopAsync(CancellationToken stoppingToken)
+        {
+            _logger.LogInformation("RDP Keyboard Translator Service stopping...");
+            
+            if (KeyboardTranslator._hookID != IntPtr.Zero)
+            {
+                KeyboardTranslator.UnhookWindowsHookEx(KeyboardTranslator._hookID);
+                _logger.LogInformation("Keyboard hook removed");
+            }
+            
+            KeyboardTranslator._flushTimer?.Stop();
+            KeyboardTranslator._flushTimer?.Dispose();
+            
+            await base.StopAsync(stoppingToken);
+        }
     }
 }
