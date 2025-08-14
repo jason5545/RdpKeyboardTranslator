@@ -25,7 +25,7 @@ if %errorLevel% neq 0 (
 
 REM Install the service
 echo Installing Windows service...
-sc create RdpKeyboardTranslator binpath= "\"%~dp0bin\Release\net6.0-windows\RdpKeyboardTranslator.exe\" --service" start= auto displayname= "RDP Keyboard Translator Service" description= "Translates RDP soft keyboard input to hardware scancodes for Warp Terminal and VS Code"
+sc create RdpKeyboardTranslator binpath= "%~dp0bin\Release\net6.0-windows\RdpKeyboardTranslator.exe --service" start= auto displayname= "RDP Keyboard Translator Service"
 
 if %errorLevel% eq 0 (
     echo Service installed successfully!
