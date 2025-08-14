@@ -3,6 +3,7 @@ REM Install RDP Keyboard Translator as Windows Service
 REM Requires Administrator privileges
 
 echo Installing RDP Keyboard Translator Service...
+cd /d "%~dp0"
 
 REM Check if running as administrator
 net session >nul 2>&1
@@ -15,7 +16,6 @@ if %errorLevel% neq 0 (
 
 REM Build the project first
 echo Building project...
-cd /d "%~dp0"
 dotnet build RdpKeyboardTranslator.csproj --configuration Release
 if %errorLevel% neq 0 (
     echo ERROR: Build failed
@@ -23,14 +23,23 @@ if %errorLevel% neq 0 (
     exit /b 1
 )
 
-REM Install the service
+echo Checking if executable exists...
+if exist "bin\Release\net6.0-windows\RdpKeyboardTranslator.exe" (
+    echo ✓ Executable found
+) else (
+    echo ✗ Executable NOT found after build
+    pause
+    exit /b 1
+)
+
+echo.
 echo Installing Windows service...
 sc create RdpKeyboardTranslator binpath= "%~dp0bin\Release\net6.0-windows\RdpKeyboardTranslator.exe --service" start= auto displayname= "RDP Keyboard Translator Service"
 
 if %errorLevel% eq 0 (
     echo Service installed successfully!
     echo Starting service...
-    sc start "RdpKeyboardTranslator"
+    sc start RdpKeyboardTranslator
     
     if %errorLevel% eq 0 (
         echo Service started successfully!
