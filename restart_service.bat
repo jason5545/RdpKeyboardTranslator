@@ -3,6 +3,7 @@ REM Restart RDP Keyboard Translator Service
 REM Requires Administrator privileges
 
 echo Restarting RDP Keyboard Translator Service...
+cd /d "%~dp0"
 
 REM Check if running as administrator
 net session >nul 2>&1

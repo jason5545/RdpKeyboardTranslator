@@ -3,6 +3,7 @@ REM Uninstall RDP Keyboard Translator Windows Service
 REM Requires Administrator privileges
 
 echo Uninstalling RDP Keyboard Translator Service...
+cd /d "%~dp0"
 
 REM Check if running as administrator
 net session >nul 2>&1

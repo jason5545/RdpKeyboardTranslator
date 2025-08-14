@@ -1,5 +1,6 @@
 @echo off
 REM Check RDP Keyboard Translator Service Status
+cd /d "%~dp0"
 
 echo === RDP Keyboard Translator Service Status ===
 echo.
