@@ -15,7 +15,7 @@ if %errorLevel% neq 0 (
 
 REM Build the project first
 echo Building project...
-dotnet build --configuration Release
+dotnet build RdpKeyboardTranslator.csproj --configuration Release
 if %errorLevel% neq 0 (
     echo ERROR: Build failed
     pause
