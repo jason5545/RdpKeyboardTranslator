@@ -557,7 +557,7 @@ namespace RdpKeyboardTranslator
         private const uint KEYEVENTF_SCANCODE = 0x0008;
         private const uint KEYEVENTF_UNICODE = 0x0004; // Use Unicode injection via SendInput
 
-        // Main entry point with command line argument support (默認托盤模式)
+        // Main entry point with command line argument support (默認系統匣模式)
         public static void Main(string[] args)
         {
             // Check for service mode
@@ -1094,7 +1094,7 @@ namespace RdpKeyboardTranslator
         // Optimized target window detection with caching and better window identification
         private static IntPtr _cachedTargetWindow = IntPtr.Zero;
         private static DateTime _lastWindowDetection = DateTime.MinValue;
-        private static readonly TimeSpan WindowCacheTimeout = TimeSpan.FromMilliseconds(100);  // 縮短緩存時間以提升響應速度
+        private static readonly TimeSpan WindowCacheTimeout = TimeSpan.FromMilliseconds(100);  // 縮短快取時間以提升響應速度
         
         private static IntPtr FindBestTargetWindow()
         {
@@ -1453,7 +1453,7 @@ namespace RdpKeyboardTranslator
                 _unicodeBuffer.Append(ch);
                 Console.WriteLine($"[BUF] Queued '{ch}'\t(0x{(int)ch:X4}) len={_unicodeBuffer.Length}");
                 
-                // 中文字元智能緩衝：單個中文字元或緩衝區達到3個字元時立即刷新
+                // 中文字元智慧緩衝：單個中文字元或緩衝區達到3個字元時立即刷新
                 bool isChinese = ch >= 0x4E00 && ch <= 0x9FFF;  // CJK 統一漢字
                 if (isChinese || _unicodeBuffer.Length >= 3)
                 {
@@ -3100,7 +3100,7 @@ namespace RdpKeyboardTranslator
 
         private void OnShowStatus(object sender, EventArgs e)
         {
-            string status = _isEnabled ? "運行中" : "已停用";
+            string status = _isEnabled ? "執行中" : "已停用";
             string message = $"狀態: {status}\n架構: TSF + 虛擬剪貼簿\n版本: v2.0";
             
             MessageBox.Show(message, "RDP 鍵盤轉換器 - 狀態", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -3115,19 +3115,19 @@ namespace RdpKeyboardTranslator
                 ShowWindow(consoleWindow, 5); // SW_SHOW
             }
             
-            _trayIcon.ShowBalloonTip(3000, "調試模式", "控制台窗口已顯示，可查看詳細日誌", ToolTipIcon.Info);
+            _trayIcon.ShowBalloonTip(3000, "調試模式", "主控台視窗已顯示，可查看詳細日誌", ToolTipIcon.Info);
         }
 
         private void OnAbout(object sender, EventArgs e)
         {
             string about = "RDP 鍵盤轉換器 v2.0\n\n" +
-                          "功能: 將 Android RDP 軟鍵盤輸入轉換為兼容 Warp Terminal 等應用的格式\n\n" +
+                          "功能: 將 Android RDP 軟體鍵盤輸入轉換為兼容 Warp Terminal 等應用的格式\n\n" +
                           "架構: TSF (Text Services Framework) + 虛擬剪貼簿隔離\n\n" +
                           "特點:\n" +
                           "• 英文字符: 即時 PostMessage 注入\n" +
                           "• 中文字符: 虛擬剪貼簿安全注入\n" +
                           "• 系統剪貼簿: 完全隔離保護\n" +
-                          "• 零用戶干擾: 透明運行\n\n" +
+                          "• 零用戶干擾: 透明執行\n\n" +
                           "開發: Claude Code Assistant\n" +
                           "完成時間: 2025-08-13";
             

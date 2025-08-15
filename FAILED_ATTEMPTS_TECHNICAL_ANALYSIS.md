@@ -9,12 +9,12 @@
 ## 🎯 核心問題描述
 
 ### 問題背景
-- **目標**: 使 Android RDP 軟鍵盤能在 Warp Terminal 和 VS Code 等高性能應用中正常工作
-- **根本原因**: RDP 軟鍵盤發送高級軟體事件，但 Warp Terminal 只監聽低級硬體掃描碼事件
+- **目標**: 使 Android RDP 軟體鍵盤能在 Warp Terminal 和 VS Code 等高性能應用中正常工作
+- **根本原因**: RDP 軟體鍵盤發送高級軟體事件，但 Warp Terminal 只監聽低級硬體掃描碼事件
 - **環境**: Windows 10/11 + Android Microsoft Remote Desktop + Warp Terminal/VS Code
 
-### 檢測成功但注入失敗
-✅ **成功部分**: VK_PACKET 事件檢測 100% 完美  
+### 偵測成功但注入失敗
+✅ **成功部分**: VK_PACKET 事件偵測 100% 完美  
 ❌ **失敗部分**: 所有硬體級鍵盤注入方法在 RDP 環境中失效
 
 ---
@@ -59,29 +59,29 @@ keybd_event((byte)virtualKey, (byte)scanCode, KEYEVENTF_SCANCODE, UIntPtr.Zero);
 **結果**: API 調用成功，但目標應用程式完全無反應  
 **分析**: keybd_event 在 RDP 環境中被靜默忽略
 
-### 3. Windows 消息注入失敗
+### 3. Windows 訊息注入失敗
 
 #### 方法 1: WM_KEYDOWN/WM_KEYUP
 ```csharp
 PostMessage(targetWindow, WM_KEYDOWN, (IntPtr)virtualKey, MakeLParam(scanCode));
 PostMessage(targetWindow, WM_KEYUP, (IntPtr)virtualKey, MakeLParam(scanCode));
 ```
-**結果**: Warp Terminal 完全忽略這些消息  
-**分析**: 高性能應用程式只處理低級硬體事件，忽略高級 Windows 消息
+**結果**: Warp Terminal 完全忽略這些訊息  
+**分析**: 高性能應用程式只處理低級硬體事件，忽略高級 Windows 訊息
 
-#### 方法 2: WM_UNICHAR Unicode 消息
+#### 方法 2: WM_UNICHAR Unicode 訊息
 ```csharp
 PostMessage(targetWindow, WM_UNICHAR, (IntPtr)unicodeChar, IntPtr.Zero);
 ```
-**結果**: 消息發送成功，但目標應用程式不處理  
+**結果**: 訊息發送成功，但目標應用程式不處理  
 **分析**: 現代應用程式很少實現 WM_UNICHAR 處理
 
-#### 方法 3: WM_IME_CHAR 輸入法消息
+#### 方法 3: WM_IME_CHAR 輸入法訊息
 ```csharp
 PostMessage(targetWindow, WM_IME_CHAR, (IntPtr)unicodeChar, IntPtr.Zero);
 ```
 **結果**: 產生亂碼字符，不是期望的 Unicode 字符  
-**分析**: IME 消息的編碼與我們的 Unicode 字符不匹配
+**分析**: IME 訊息的編碼與我們的 Unicode 字符不匹配
 
 ### 4. 輸入法 (IME) 相關失敗
 
@@ -95,7 +95,7 @@ bool result = ImmSetCompositionStringW(hIMC, GCS_COMPSTR, text, text.Length * 2,
 
 #### 方法 2: 模擬輸入法組合
 嘗試發送 WM_IME_STARTCOMPOSITION, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION 序列  
-**結果**: 消息序列發送成功，但沒有文字輸出  
+**結果**: 訊息序列發送成功，但沒有文字輸出  
 **分析**: 輸入法上下文沒有正確建立
 
 ### 5. 低級鍵盤鉤子注入失敗
@@ -126,10 +126,10 @@ Marshal.StructureToPtr(hookStruct, lParam, false);
 - **輸入注入限制**: 系統阻止跨會話的低級輸入注入
 - **API 限制**: SendInput, keybd_event 等 API 在 RDP 環境中被限制
 
-#### 2. 消息路由變更
-- **消息過濾**: RDP 可能過濾或修改某些 Windows 消息
+#### 2. 訊息路由變更
+- **訊息過濾**: RDP 可能過濾或修改某些 Windows 訊息
 - **焦點管理**: 窗口焦點和輸入焦點在 RDP 環境中行為不同
-- **線程親和性**: 跨線程消息傳遞在 RDP 中受限
+- **線程親和性**: 跨線程訊息傳遞在 RDP 中受限
 
 #### 3. 硬體抽象層問題
 - **掃描碼映射**: RDP 環境中的掃描碼映射可能不同於本地環境
@@ -173,7 +173,7 @@ insertAtSelection.InsertTextAtSelection(ec, 0, text, text.Length, out range);
 PostMessage(targetWindow, WM_CHAR, (IntPtr)unicodeChar, IntPtr.Zero);
 ```
 **成功原因**:
-- WM_CHAR 是高級消息，不需要硬體級權限
+- WM_CHAR 是高級訊息，不需要硬體級權限
 - ASCII 字符編碼簡單，不涉及複雜的 Unicode 處理
 - 大多數應用程式都實現了 WM_CHAR 處理
 
@@ -235,19 +235,19 @@ SessionResult: 0x80004003 (E_POINTER)
 ## 🔍 RDP 特定技術限制
 
 ### 1. 會話邊界限制
-- **不同安全上下文**: RDP 會話運行在獨立的安全上下文中
+- **不同安全上下文**: RDP 會話執行在獨立的安全上下文中
 - **跨會話通信限制**: Windows 阻止大部分跨會話的輸入操作
-- **權限提升無效**: 即使以管理員權限運行，仍受 RDP 限制
+- **權限提升無效**: 即使以管理員權限執行，仍受 RDP 限制
 
 ### 2. 虛擬化層影響
 - **輸入虛擬化**: RDP 對輸入事件進行虛擬化處理
-- **消息過濾**: 某些低級消息被 RDP 層過濾或修改
+- **訊息過濾**: 某些低級訊息被 RDP 層過濾或修改
 - **設備模擬**: 虛擬鍵盤設備與物理設備行為差異
 
-### 3. 應用程式檢測機制
-- **RDP 檢測**: 應用程式可能檢測到 RDP 環境並改變行為
+### 3. 應用程式偵測機制
+- **RDP 偵測**: 應用程式可能偵測到 RDP 環境並改變行為
 - **安全策略**: 某些應用程式在 RDP 環境中禁用某些功能
-- **性能優化**: 應用程式可能在 RDP 中使用不同的輸入處理路徑
+- **性能最佳化**: 應用程式可能在 RDP 中使用不同的輸入處理路徑
 
 ---
 
@@ -273,7 +273,7 @@ RDP 環境對低級輸入注入有系統級限制，這不是程式錯誤，而�
 
 ### 2. 高級 vs 低級 API 的差異
 - **低級 API (失敗)**: SendInput, keybd_event, 硬體掃描碼
-- **高級 API (成功)**: PostMessage, 剪貼簿操作, 應用程式消息
+- **高級 API (成功)**: PostMessage, 剪貼簿操作, 應用程式訊息
 
 ### 3. 字符類型的重要性
 ASCII 字符和 Unicode 字符在 RDP 環境中的處理完全不同，需要不同的解決方案。

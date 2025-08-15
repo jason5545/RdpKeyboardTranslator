@@ -19,8 +19,8 @@
 - **COM 介面定義**：完整實現 ITfThreadMgr, ITfDocumentMgr, ITfContext, ITfRange, ITfInsertAtSelection
 - **資源管理**：正確的初始化和清理流程
 
-#### 2. VK_PACKET 檢測
-- **完美檢測**：100% 準確攔截 RDP 軟鍵盤事件
+#### 2. VK_PACKET 偵測
+- **完美偵測**：100% 準確攔截 RDP 軟體鍵盤事件
 - **字符解析**：正確提取 Unicode 字符
   - 中文：`您` (0x60A8), `好` (0x597D)  
   - 英文：`s` (0x0073), `f` (0x0066), `d` (0x0064)
@@ -82,8 +82,8 @@ TSF Context 需要知道當前的文字插入點，但我們的實現無法獲�
 #### 1. 安全沙箱
 RDP 環境對跨進程輸入注入施加嚴格限制，導致 SendInput 系列 API 失效。
 
-#### 2. 消息路由
-Windows 消息在 RDP 環境中的路由可能被修改，影響 WM_UNICHAR 等消息的傳遞。
+#### 2. 訊息路由
+Windows 訊息在 RDP 環境中的路由可能被修改，影響 WM_UNICHAR 等訊息的傳遞。
 
 ## 解決方案選項
 
@@ -122,7 +122,7 @@ Windows 消息在 RDP 環境中的路由可能被修改，影響 WM_UNICHAR 等�
 - **類型**：可能是 Warp Terminal 或類似的終端應用
 
 ### RDP 會話
-- **檢測**：VK_PACKET 事件完美攔截
+- **偵測**：VK_PACKET 事件完美攔截
 - **限制**：SendInput Error 87, 跨進程注入受限
 
 ### 當前輸出
