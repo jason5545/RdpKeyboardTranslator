@@ -3040,7 +3040,7 @@ namespace RdpKeyboardTranslator
             
             _contextMenu.Items.Add(new ToolStripSeparator());
             _contextMenu.Items.Add(new ToolStripMenuItem("顯示狀態", null, OnShowStatus));
-            _contextMenu.Items.Add(new ToolStripMenuItem("調試模式", null, OnShowDebug));
+            _contextMenu.Items.Add(new ToolStripMenuItem("偵錯模式", null, OnShowDebug));
             
             _contextMenu.Items.Add(new ToolStripSeparator());
             _contextMenu.Items.Add(new ToolStripMenuItem("關於", null, OnAbout));
@@ -3115,7 +3115,7 @@ namespace RdpKeyboardTranslator
                 ShowWindow(consoleWindow, 5); // SW_SHOW
             }
             
-            _trayIcon.ShowBalloonTip(3000, "調試模式", "主控台視窗已顯示，可查看詳細日誌", ToolTipIcon.Info);
+            _trayIcon.ShowBalloonTip(3000, "偵錯模式", "主控台視窗已顯示，可查看詳細日誌", ToolTipIcon.Info);
         }
 
         private void OnAbout(object sender, EventArgs e)

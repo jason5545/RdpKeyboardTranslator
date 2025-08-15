@@ -204,7 +204,7 @@ KBDLLHOOKSTRUCT {
 
 ### 成功因素
 1. **逐步迭代**：從簡單到複雜，每步驗證
-2. **全面日志**：詳細的調試輸出幫助快速定位問題
+2. **全面日誌**：詳細的偵錯輸出幫助快速定位問題
 3. **用戶反饋驅動**：根據實際測試結果調整策略
 4. **多方法嘗試**：不依賴單一技術路徑
 
@@ -214,7 +214,7 @@ KBDLLHOOKSTRUCT {
 3. **跨會話注入**：RDP 會話的桌面上下文隔離
 4. **剪貼簿競爭**：多程式同時訪問剪貼簿的風險
 
-### 調試技巧
+### 偵錯技巧
 1. **Hook 事件監控**：全面監控所有鍵盤事件
 2. **錯誤碼分析**：Error 87 指向參數驗證問題
 3. **物理按鍵對比**：物理 Enter 鍵成功證明目標應用可接收輸入
@@ -297,13 +297,13 @@ KBDLLHOOKSTRUCT {
 ### 建置腳本
 1. **build.bat** - 編譯腳本
 2. **run_admin.bat** - 管理員權限執行
-3. **run_debug.bat** - 調試模式執行
+3. **run_debug.bat** - 偵錯模式執行
 
 ### 文檔資料
 1. **README.md** - 用戶使用指南
 2. **TESTING_GUIDE.md** - 測試指南
 3. **TECHNICAL_ANALYSIS.md** - 技術分析報告
-4. **DEBUG_LOG_EXAMPLES.md** - 調試日志範例
+4. **DEBUG_LOG_EXAMPLES.md** - 偵錯日誌範例
 5. **SOLUTION_PROPOSALS.md** - 解決方案提案
 6. **PROJECT_COMPLETION_REPORT.md** - 本完成報告
 
