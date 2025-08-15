@@ -3121,14 +3121,14 @@ namespace RdpKeyboardTranslator
         private void OnAbout(object sender, EventArgs e)
         {
             string about = "RDP 鍵盤轉換器 v2.0\n\n" +
-                          "功能: 將 Android RDP 軟體鍵盤輸入轉換為兼容 Warp Terminal 等應用的格式\n\n" +
+                          "功能: 將 Android RDP 軟體鍵盤輸入轉換為相容 Warp Terminal 等應用的格式\n\n" +
                           "架構: TSF (Text Services Framework) + 虛擬剪貼簿隔離\n\n" +
                           "特點:\n" +
-                          "• 英文字符: 即時 PostMessage 注入\n" +
-                          "• 中文字符: 虛擬剪貼簿安全注入\n" +
+                          "• 英文字元: 即時 PostMessage 注入\n" +
+                          "• 中文字元: 虛擬剪貼簿安全注入\n" +
                           "• 系統剪貼簿: 完全隔離保護\n" +
                           "• 零用戶干擾: 透明執行\n\n" +
-                          "開發: Claude Code Assistant\n" +
+                          "開發: jason5545 (GitHub)\n" +
                           "完成時間: 2025-08-13";
             
             MessageBox.Show(about, "關於 RDP 鍵盤轉換器", MessageBoxButtons.OK, MessageBoxIcon.Information);
