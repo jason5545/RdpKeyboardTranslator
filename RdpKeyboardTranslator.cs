@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Win32;
 
 namespace RdpKeyboardTranslator
 {
@@ -33,6 +34,10 @@ namespace RdpKeyboardTranslator
 
         public static bool _translatorActive = true;
         private static Dictionary<int, ushort> _vkToScanCodeMap;
+        
+        // RDP Session Management
+        private static bool _isRdpSession = false;
+        private static uint _currentSessionId = 0;
         
         // Note: Duplicate prevention removed - now using system key skip logic instead
 
@@ -91,6 +96,28 @@ namespace RdpKeyboardTranslator
 
         [DllImport("user32.dll")]
         private static extern short VkKeyScan(char ch);
+
+        // Session Management APIs
+        [DllImport("kernel32.dll")]
+        static extern bool ProcessIdToSessionId(uint dwProcessId, out uint pSessionId);
+
+        [DllImport("kernel32.dll")]
+        static extern uint GetCurrentProcessId();
+
+        [DllImport("wtsapi32.dll")]
+        static extern IntPtr WTSOpenServer([MarshalAs(UnmanagedType.LPStr)] string pServerName);
+
+        [DllImport("wtsapi32.dll")]
+        static extern void WTSCloseServer(IntPtr hServer);
+
+        [DllImport("wtsapi32.dll")]
+        static extern bool WTSQuerySessionInformation(IntPtr hServer, int sessionId, int wtsInfoClass, out IntPtr ppBuffer, out int pBytesReturned);
+
+        [DllImport("wtsapi32.dll")]
+        static extern void WTSFreeMemory(IntPtr pMemory);
+
+        private const int WTS_CURRENT_SESSION = -1;
+        private const int WTSConnectState = 0;
 
         [DllImport("user32.dll")]
         private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
@@ -572,6 +599,9 @@ namespace RdpKeyboardTranslator
             Console.WriteLine("=== RDP Keyboard Translator Debug Version ===");
             Console.WriteLine("Initializing...");
 
+            // Initialize session monitoring
+            InitializeSessionMonitoring();
+
             InitializeScanCodeMapping();
             
             // Initialize TSF
@@ -598,6 +628,7 @@ namespace RdpKeyboardTranslator
             Console.WriteLine("Debug Information:");
             Console.WriteLine("- Will show intercepted RDP events");
             Console.WriteLine("- Will show scancode injections");
+            Console.WriteLine("- Monitoring RDP session changes");
             Console.WriteLine("- Press ESC + F12 simultaneously to exit");
             Console.WriteLine("");
             Console.WriteLine("Waiting for RDP keyboard events...");
@@ -613,6 +644,9 @@ namespace RdpKeyboardTranslator
             {
                 ShowWindow(consoleWindow, 0); // SW_HIDE
             }
+
+            // Initialize session monitoring
+            InitializeSessionMonitoring();
 
             // Initialize components silently
             InitializeScanCodeMapping();
@@ -636,6 +670,164 @@ namespace RdpKeyboardTranslator
 
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        // Session monitoring and recovery methods
+        private static void InitializeSessionMonitoring()
+        {
+            try
+            {
+                // Get current session info
+                ProcessIdToSessionId(GetCurrentProcessId(), out _currentSessionId);
+                _isRdpSession = IsRdpSession(_currentSessionId);
+                
+                Console.WriteLine($"[SESSION] Current Session ID: {_currentSessionId}");
+                Console.WriteLine($"[SESSION] Is RDP Session: {_isRdpSession}");
+
+                // Register for session change notifications
+                SystemEvents.SessionSwitch += OnSessionSwitch;
+                SystemEvents.SessionEnding += OnSessionEnding;
+                SystemEvents.SessionEnded += OnSessionEnded;
+                
+                // Start a timer to periodically check session status
+                var sessionCheckTimer = new System.Windows.Forms.Timer();
+                sessionCheckTimer.Interval = 5000; // Check every 5 seconds
+                sessionCheckTimer.Tick += CheckSessionStatus;
+                sessionCheckTimer.Start();
+                
+                Console.WriteLine("[SESSION] Session monitoring initialized");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SESSION] Failed to initialize session monitoring: {ex.Message}");
+            }
+        }
+
+        private static bool IsRdpSession(uint sessionId)
+        {
+            try
+            {
+                IntPtr server = WTSOpenServer(".");
+                if (server == IntPtr.Zero)
+                    return false;
+
+                IntPtr ppBuffer;
+                int bytesReturned;
+                if (WTSQuerySessionInformation(server, (int)sessionId, WTSConnectState, out ppBuffer, out bytesReturned))
+                {
+                    int connectState = Marshal.ReadInt32(ppBuffer);
+                    WTSFreeMemory(ppBuffer);
+                    WTSCloseServer(server);
+                    
+                    // WTSActive = 0, WTSConnected = 1, WTSConnectQuery = 2, etc.
+                    // RDP sessions typically have connectState > 0
+                    return connectState > 0;
+                }
+                WTSCloseServer(server);
+            }
+            catch
+            {
+                // Fallback: check if remote desktop is enabled
+                return Environment.GetEnvironmentVariable("SESSIONNAME")?.StartsWith("RDP") == true;
+            }
+            return false;
+        }
+
+        private static void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+        {
+            Console.WriteLine($"[SESSION] Session switch event: {e.Reason}");
+            
+            switch (e.Reason)
+            {
+                case SessionSwitchReason.RemoteConnect:
+                    Console.WriteLine("[SESSION] RDP connected - reinitializing translator");
+                    ReinitializeTranslator();
+                    break;
+                case SessionSwitchReason.RemoteDisconnect:
+                    Console.WriteLine("[SESSION] RDP disconnected - pausing translator");
+                    _translatorActive = false;
+                    break;
+                case SessionSwitchReason.SessionLock:
+                    Console.WriteLine("[SESSION] Session locked - pausing translator");
+                    _translatorActive = false;
+                    break;
+                case SessionSwitchReason.SessionUnlock:
+                    Console.WriteLine("[SESSION] Session unlocked - resuming translator");
+                    _translatorActive = true;
+                    break;
+            }
+        }
+
+        private static void OnSessionEnding(object sender, SessionEndingEventArgs e)
+        {
+            Console.WriteLine($"[SESSION] Session ending: {e.Reason}");
+            _translatorActive = false;
+        }
+
+        private static void OnSessionEnded(object sender, SessionEndedEventArgs e)
+        {
+            Console.WriteLine($"[SESSION] Session ended: {e.Reason}");
+            _translatorActive = false;
+        }
+
+        private static void CheckSessionStatus(object sender, EventArgs e)
+        {
+            try
+            {
+                uint newSessionId;
+                ProcessIdToSessionId(GetCurrentProcessId(), out newSessionId);
+                
+                if (newSessionId != _currentSessionId)
+                {
+                    Console.WriteLine($"[SESSION] Session ID changed: {_currentSessionId} -> {newSessionId}");
+                    _currentSessionId = newSessionId;
+                    _isRdpSession = IsRdpSession(_currentSessionId);
+                    
+                    if (_isRdpSession)
+                    {
+                        Console.WriteLine("[SESSION] New RDP session detected - reinitializing translator");
+                        ReinitializeTranslator();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SESSION] Error checking session status: {ex.Message}");
+            }
+        }
+
+        private static void ReinitializeTranslator()
+        {
+            try
+            {
+                Console.WriteLine("[SESSION] Reinitializing translator components...");
+                
+                // Restart TSF if needed
+                if (_tsfThreadMgr != null)
+                {
+                    InitializeTSF();
+                }
+                
+                // Reset and restart unicode buffer timer
+                if (_flushTimer != null)
+                {
+                    _flushTimer.Stop();
+                    lock (_bufLock)
+                    {
+                        _unicodeBuffer.Clear();
+                    }
+                    _flushTimer.Start();
+                }
+                
+                // Reactivate translator
+                _translatorActive = true;
+                
+                Console.WriteLine("[SESSION] Translator reinitialized successfully");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SESSION] Error reinitializing translator: {ex.Message}");
+            }
+        }
 
         public KeyboardTranslator()
         {
