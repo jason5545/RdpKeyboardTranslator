@@ -21,13 +21,13 @@ jobs:
         dotnet-version: '6.0.x'
     
     - name: Restore dependencies
-      run: dotnet restore
+      run: dotnet restore rdp.sln
     
     - name: Build
-      run: dotnet build --configuration Release --no-restore
+      run: dotnet build rdp.sln --configuration Release --no-restore
     
     - name: Test
-      run: dotnet test --configuration Release --no-build --verbosity normal
+      run: dotnet test rdp.sln --configuration Release --no-build --verbosity normal
       continue-on-error: true
     
     - name: Upload build artifacts
