@@ -34,7 +34,10 @@ if exist "bin\Release\net6.0-windows\RdpKeyboardTranslator.exe" (
 
 echo.
 echo Installing Windows service...
-sc create RdpKeyboardTranslator binpath= "%~dp0bin\Release\net6.0-windows\RdpKeyboardTranslator.exe --service" start= auto displayname= "RDP Keyboard Translator Service"
+REM Get full absolute path to executable
+set "FULL_PATH=%~dp0bin\Release\net6.0-windows\RdpKeyboardTranslator.exe"
+echo Executable path: %FULL_PATH%
+sc create RdpKeyboardTranslator binpath= "\"%FULL_PATH%\" --service" start= auto displayname= "RDP Keyboard Translator Service"
 
 if %errorLevel% eq 0 (
     echo Service installed successfully!

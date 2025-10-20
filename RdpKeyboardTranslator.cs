@@ -888,8 +888,16 @@ namespace RdpKeyboardTranslator
                 {
                     Console.WriteLine($"[RDP] Detected VK_PACKET - RDP software keyboard event");
                     // Extract Unicode character from VK_PACKET
-                    HandleVkPacket(wParam, lParam);
-                    return (IntPtr)1; // Block original event
+                    bool shouldBlock = HandleVkPacket(wParam, lParam);
+                    if (shouldBlock)
+                    {
+                        return (IntPtr)1; // Block original event
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[PASS] Letting VK_PACKET event pass through to system");
+                        return CallNextHookEx(_hookID, nCode, wParam, lParam);
+                    }
                 }
                 // Method 2: Check if this is our own injection (specific flag pattern)
                 else if (hookStruct.flags == 0x08) // LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED
@@ -973,7 +981,7 @@ namespace RdpKeyboardTranslator
         }
 
 
-        private static void HandleVkPacket(IntPtr wParam, IntPtr lParam)
+        private static bool HandleVkPacket(IntPtr wParam, IntPtr lParam)
         {
             KBDLLHOOKSTRUCT hookStruct = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
             bool isKeyDown = (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN);
@@ -995,7 +1003,7 @@ namespace RdpKeyboardTranslator
                 if (IsSystemHandledKey(virtualKey))
                 {
                     Console.WriteLine($"[SKIP] System-handled key in VK_PACKET - letting system handle natively: {(Keys)virtualKey}");
-                    return;
+                    return false; // 不阻擋，讓系統原生處理
                 }
 
                 // Handle shift state if needed
@@ -1009,18 +1017,19 @@ namespace RdpKeyboardTranslator
                 if (isKeyDown && SubmitCharViaTSF(unicodeChar))
                 {
                     Console.WriteLine($"[PACKET] TSF method succeeded for '{unicodeChar}'");
-                    return;
+                    return true; // 已處理，阻擋原始事件
                 }
 
                 // Fallback 1: PostMessage for English characters only
                 if (TryPostMessageForEnglish(unicodeChar, isKeyDown))
                 {
                     Console.WriteLine($"[PACKET] PostMessage fallback succeeded for '{unicodeChar}'");
-                    return;
+                    return true; // 已處理，阻擋原始事件
                 }
 
                 // Fallback 2: Hardware scancode injection
                 InjectHardwareScanCode(virtualKey, !isKeyDown);
+                return true; // 已嘗試處理，阻擋原始事件
             }
             else
             {
@@ -1032,14 +1041,15 @@ namespace RdpKeyboardTranslator
                     if (SubmitCharViaTSF(unicodeChar))
                     {
                         Console.WriteLine($"[PACKET] TSF succeeded for non-VK char '{unicodeChar}'");
-                        return;
+                        return true; // 已處理，阻擋原始事件
                     }
-                    
+
                     // Fallback: Buffer for batch processing
                     Console.WriteLine($"[PACKET] TSF failed, buffering char '{unicodeChar}'");
                     BufferUnicodeChar(unicodeChar);
                 }
                 // Do not immediately inject on KEYUP
+                return true; // 已嘗試處理，阻擋原始事件
             }
         }
 
